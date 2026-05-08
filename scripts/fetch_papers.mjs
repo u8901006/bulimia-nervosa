@@ -124,25 +124,27 @@ function httpsGet(url, timeoutMs = 30000) {
   });
 }
 
+function encodeQuery(str) {
+  return encodeURIComponent(str).replace(/%20/g, "+");
+}
+
 async function searchPapers(query, retmax = 60) {
-  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
+  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeQuery(query)}&retmax=${retmax}&sort=date&retmode=json`;
   try {
     const text = await httpsGet(url, 30000);
     if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html") || text.trim().startsWith("<HTML")) {
-      console.error(`[DEBUG] PubMed response (first 500 chars): ${text.slice(0, 500)}`);
       throw new Error("PubMed returned HTML error page");
     }
     const data = JSON.parse(text);
     return data?.esearchresult?.idlist || [];
   } catch (e) {
-    console.error(`[WARN] searchPapers failed: ${e.message}`);
     throw e;
   }
 }
 
 async function fetchDetails(pmids) {
   if (!pmids.length) return [];
-  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
+  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml`;
   const xml = await httpsGet(url, 60000);
   if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
     throw new Error("PubMed fetch returned HTML error");
