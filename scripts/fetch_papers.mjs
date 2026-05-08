@@ -226,7 +226,7 @@ function saveSeenPmids(pmids) {
   writeFileSync(seenPath, JSON.stringify([...pmids], null, 2), "utf-8");
 }
 
-async function main() {
+function main() {
   const days = parseInt(process.env.FETCH_DAYS || "7", 10);
   const maxPapers = parseInt(process.env.MAX_PAPERS || "50", 10);
 
