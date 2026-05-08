@@ -213,8 +213,6 @@ function parsePapersXML(xml) {
   }
   return papers;
 }
-  return papers;
-}
 
 function loadSeenPmids() {
   const seenPath = resolve(ROOT, "seen_pmids.json");
