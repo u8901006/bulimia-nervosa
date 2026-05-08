@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import https from "node:https";
+import { execSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -94,44 +94,23 @@ function buildBroadQuery(days) {
   return `(${CORE_QUERY}) AND ${dateFilter}`;
 }
 
-function httpsGet(url, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(
-      url,
-      {
-        headers: {
-          "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
-          Accept: "*/*",
-        },
-        timeout: timeoutMs,
-      },
-      (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return resolve(httpsGet(res.headers.location, timeoutMs));
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-        res.on("error", reject);
-      }
-    );
-    req.on("error", reject);
-    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
-  });
+function curlGet(url, timeoutMs = 30000) {
+  const timeoutSec = Math.ceil(timeoutMs / 1000);
+  const result = execSync(
+    `curl -sS -L --max-time ${timeoutSec} -H "User-Agent: BulimiaNervosaBot/1.0 (research aggregator)" -- "${url}"`,
+    { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 10 * 1024 * 1024 }
+  );
+  return result;
 }
 
 function encodeQuery(str) {
   return encodeURIComponent(str).replace(/%20/g, "+");
 }
 
-async function searchPapers(query, retmax = 60) {
+function searchPapers(query, retmax = 60) {
   const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeQuery(query)}&retmax=${retmax}&sort=date&retmode=json`;
   try {
-    const text = await httpsGet(url, 30000);
+    const text = curlGet(url, 30000);
     if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html") || text.trim().startsWith("<HTML")) {
       throw new Error("PubMed returned HTML error page");
     }
@@ -141,14 +120,22 @@ async function searchPapers(query, retmax = 60) {
     throw e;
   }
 }
+    const data = JSON.parse(text);
+    return data?.esearchresult?.idlist || [];
+  } catch (e) {
+    throw e;
+  }
+}
 
-async function fetchDetails(pmids) {
+function fetchDetails(pmids) {
   if (!pmids.length) return [];
   const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml`;
-  const xml = await httpsGet(url, 60000);
+  const xml = curlGet(url, 60000);
   if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
     throw new Error("PubMed fetch returned HTML error");
   }
+  return parsePapersXML(xml);
+}
   return parsePapersXML(xml);
 }
 
@@ -247,7 +234,7 @@ async function main() {
 
   let pmids;
   try {
-    pmids = await searchPapers(buildQuery(days), maxPapers);
+    pmids = searchPapers(buildQuery(days), maxPapers);
     console.error(`[INFO] Journal batch 1: ${pmids.length} results`);
   } catch (e) {
     console.error(`[WARN] Journal batch 1 failed: ${e.message}`);
@@ -255,7 +242,7 @@ async function main() {
   }
 
   try {
-    const batch2 = await searchPapers(buildQueryBatch2(days), maxPapers);
+    const batch2 = searchPapers(buildQueryBatch2(days), maxPapers);
     console.error(`[INFO] Journal batch 2: ${batch2.length} results`);
     const existing = new Set(pmids);
     for (const id of batch2) {
@@ -267,7 +254,7 @@ async function main() {
 
   if (pmids.length < 5) {
     try {
-      const broad = await searchPapers(buildBroadQuery(days), maxPapers);
+      const broad = searchPapers(buildBroadQuery(days), maxPapers);
       console.error(`[INFO] Broad search: ${broad.length} results`);
       const existing = new Set(pmids);
       for (const id of broad) {
@@ -284,7 +271,7 @@ async function main() {
 
   let papers = [];
   if (newPmids.length > 0) {
-    papers = await fetchDetails(newPmids);
+    papers = fetchDetails(newPmids);
     console.error(`[INFO] Fetched details for ${papers.length} papers`);
   }
 
