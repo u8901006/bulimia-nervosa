@@ -120,12 +120,6 @@ function searchPapers(query, retmax = 60) {
     throw e;
   }
 }
-    const data = JSON.parse(text);
-    return data?.esearchresult?.idlist || [];
-  } catch (e) {
-    throw e;
-  }
-}
 
 function fetchDetails(pmids) {
   if (!pmids.length) return [];
@@ -134,8 +128,6 @@ function fetchDetails(pmids) {
   if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
     throw new Error("PubMed fetch returned HTML error");
   }
-  return parsePapersXML(xml);
-}
   return parsePapersXML(xml);
 }
 
