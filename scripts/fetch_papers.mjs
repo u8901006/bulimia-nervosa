@@ -103,6 +103,29 @@ function curlGet(url, timeoutMs = 30000) {
   return result;
 }
 
+const EBI_SEARCH = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
+
+function searchEuropePMC(query, pageSize = 50) {
+  const europeQuery = query.replace(/\[Mesh\]/g, "").replace(/\[tiab\]/g, "").replace(/\[Journal\]/g, "").replace(/\[Date - Publication\].*$/,"").replace(/[":()]/g, "").trim();
+  const url = `${EBI_SEARCH}?query=${encodeURIComponent(europeQuery)}&format=json&pageSize=${pageSize}&sort=PUB_DATE desc`;
+  console.error(`[INFO] Trying Europe PMC fallback...`);
+  const text = curlGet(url, 30000);
+  const data = JSON.parse(text);
+  const results = data?.resultList?.result || [];
+  return results.map((r) => ({
+    pmid: r.pmid || "",
+    title: r.title || "",
+    journal: r.journalTitle || "",
+    date: r.pubYear || "",
+    abstract: (r.abstractText || "").slice(0, 2000),
+    url: r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : (r.doi ? `https://doi.org/${r.doi}` : ""),
+    keywords: (r.keywordList?.keyword || []).slice(0, 10),
+    doi: r.doi || "",
+  }));
+}
+  return encodeURIComponent(str).replace(/%20/g, "+");
+}
+
 function encodeQuery(str) {
   return encodeURIComponent(str).replace(/%20/g, "+");
 }
@@ -257,19 +280,34 @@ function main() {
     }
   }
 
-  const seenPmids = loadSeenPmids();
-  const newPmids = pmids.filter((id) => !seenPmids.has(id));
-  console.error(`[INFO] ${newPmids.length} new papers (after dedup from ${seenPmids.size} seen)`);
-
   let papers = [];
-  if (newPmids.length > 0) {
-    papers = fetchDetails(newPmids);
-    console.error(`[INFO] Fetched details for ${papers.length} papers`);
+  if (pmids.length > 0) {
+    try {
+      papers = fetchDetails(pmids);
+      console.error(`[INFO] Fetched details for ${papers.length} papers from PubMed`);
+    } catch (e) {
+      console.error(`[WARN] PubMed fetch failed: ${e.message}`);
+    }
+  }
+
+  if (papers.length === 0) {
+    console.error(`[INFO] PubMed failed, trying Europe PMC...`);
+    try {
+      const broadQuery = `bulimia nervosa OR binge-purge OR binge eating purging`;
+      papers = searchEuropePMC(broadQuery, maxPapers);
+      console.error(`[INFO] Europe PMC returned ${papers.length} papers`);
+    } catch (e) {
+      console.error(`[WARN] Europe PMC also failed: ${e.message}`);
+    }
   }
 
   const now = new Date();
   const taipei = new Date(now.getTime() + 8 * 3600000);
   const dateStr = `${taipei.getUTCFullYear()}-${String(taipei.getUTCMonth() + 1).padStart(2, "0")}-${String(taipei.getUTCDate()).padStart(2, "0")}`;
+
+  const seenPmids = loadSeenPmids();
+  papers = papers.filter((p) => !seenPmids.has(p.pmid));
+  console.error(`[INFO] ${papers.length} new papers (after dedup from ${seenPmids.size} seen)`);
 
   const output = { date: dateStr, count: papers.length, papers };
 
@@ -277,11 +315,14 @@ function main() {
   writeFileSync(outPath, JSON.stringify(output, null, 2), "utf-8");
   console.error(`[INFO] Saved to papers.json (${papers.length} papers)`);
 
+  const newPmids = papers.filter((p) => p.pmid).map((p) => p.pmid);
   const allSeen = new Set([...seenPmids, ...newPmids]);
   saveSeenPmids(allSeen);
 }
 
-main().catch((e) => {
+try {
+  main();
+} catch (e) {
   console.error(`[FATAL] ${e.message}`);
   process.exit(1);
-});
+}
