@@ -94,51 +94,70 @@ function buildBroadQuery(days) {
 }
 
 async function searchPapers(query, retmax = 60) {
-  const params = new URLSearchParams({
-    db: "pubmed",
-    term: query,
-    retmax: String(retmax),
-    sort: "date",
-    retmode: "json",
-  });
-  const resp = await fetch(PUBMED_SEARCH, {
-    method: "POST",
-    headers: {
-      "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!resp.ok) throw new Error(`PubMed search HTTP ${resp.status}`);
-  const ct = resp.headers.get("content-type") || "";
-  if (!ct.includes("json")) {
-    const text = await resp.text();
-    throw new Error(`PubMed returned non-JSON (${ct}): ${text.slice(0, 100)}`);
+  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
+        signal: AbortSignal.timeout(30000),
+        redirect: "follow",
+      });
+      if (resp.status === 429 || resp.status === 503) {
+        console.error(`[WARN] PubMed rate limited (${resp.status}), waiting...`);
+        await new Promise((r) => setTimeout(r, 10000 * (attempt + 1)));
+        continue;
+      }
+      const text = await resp.text();
+      if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+        throw new Error(`PubMed returned HTML error page (attempt ${attempt + 1})`);
+      }
+      const data = JSON.parse(text);
+      return data?.esearchresult?.idlist || [];
+    } catch (e) {
+      if (attempt < 2) {
+        console.error(`[WARN] searchPapers attempt ${attempt + 1} failed: ${e.message}`);
+        await new Promise((r) => setTimeout(r, 5000));
+      } else {
+        throw e;
+      }
+    }
   }
-  const data = await resp.json();
-  return data?.esearchresult?.idlist || [];
+  return [];
 }
 
 async function fetchDetails(pmids) {
   if (!pmids.length) return [];
-  const params = new URLSearchParams({
-    db: "pubmed",
-    id: pmids.join(","),
-    retmode: "xml",
-  });
-  const resp = await fetch(PUBMED_FETCH, {
-    method: "POST",
-    headers: {
-      "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!resp.ok) throw new Error(`PubMed fetch HTTP ${resp.status}`);
-  const xml = await resp.text();
+  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
+        signal: AbortSignal.timeout(60000),
+        redirect: "follow",
+      });
+      if (resp.status === 429 || resp.status === 503) {
+        console.error(`[WARN] PubMed fetch rate limited, waiting...`);
+        await new Promise((r) => setTimeout(r, 10000 * (attempt + 1)));
+        continue;
+      }
+      const xml = await resp.text();
+      if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
+        throw new Error(`PubMed fetch returned HTML error (attempt ${attempt + 1})`);
+      }
+      return parsePapersXML(xml);
+    } catch (e) {
+      if (attempt < 2) {
+        console.error(`[WARN] fetchDetails attempt ${attempt + 1} failed: ${e.message}`);
+        await new Promise((r) => setTimeout(r, 5000));
+      } else {
+        throw e;
+      }
+    }
+  }
+  return [];
+}
 
+function parsePapersXML(xml) {
   const papers = [];
   const articleRegex = /<PubmedArticle>([\s\S]*?)<\/PubmedArticle>/g;
   let match;
@@ -192,6 +211,8 @@ async function fetchDetails(pmids) {
       keywords,
     });
   }
+  return papers;
+}
   return papers;
 }
 
