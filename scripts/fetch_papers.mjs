@@ -68,7 +68,19 @@ function buildQuery(days) {
   const mm = String(since.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(since.getUTCDate()).padStart(2, "0");
   const dateFilter = `"${yyyy}/${mm}/${dd}"[Date - Publication] : "3000"[Date - Publication]`;
-  const journalPart = JOURNALS.map((j) => `"${j}"[Journal]`).join(" OR ");
+  const coreJournals = JOURNALS.slice(0, 15);
+  const journalPart = coreJournals.map((j) => `"${j}"[Journal]`).join(" OR ");
+  return `(${CORE_QUERY}) AND (${journalPart}) AND ${dateFilter}`;
+}
+
+function buildQueryBatch2(days) {
+  const since = new Date(Date.now() - days * 86400000);
+  const yyyy = since.getUTCFullYear();
+  const mm = String(since.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(since.getUTCDate()).padStart(2, "0");
+  const dateFilter = `"${yyyy}/${mm}/${dd}"[Date - Publication] : "3000"[Date - Publication]`;
+  const restJournals = JOURNALS.slice(15);
+  const journalPart = restJournals.map((j) => `"${j}"[Journal]`).join(" OR ");
   return `(${CORE_QUERY}) AND (${journalPart}) AND ${dateFilter}`;
 }
 
@@ -82,21 +94,46 @@ function buildBroadQuery(days) {
 }
 
 async function searchPapers(query, retmax = 60) {
-  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json`;
-  const resp = await fetch(url, {
-    headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
+  const params = new URLSearchParams({
+    db: "pubmed",
+    term: query,
+    retmax: String(retmax),
+    sort: "date",
+    retmode: "json",
+  });
+  const resp = await fetch(PUBMED_SEARCH, {
+    method: "POST",
+    headers: {
+      "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: params.toString(),
     signal: AbortSignal.timeout(30000),
   });
   if (!resp.ok) throw new Error(`PubMed search HTTP ${resp.status}`);
+  const ct = resp.headers.get("content-type") || "";
+  if (!ct.includes("json")) {
+    const text = await resp.text();
+    throw new Error(`PubMed returned non-JSON (${ct}): ${text.slice(0, 100)}`);
+  }
   const data = await resp.json();
   return data?.esearchresult?.idlist || [];
 }
 
 async function fetchDetails(pmids) {
   if (!pmids.length) return [];
-  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml`;
-  const resp = await fetch(url, {
-    headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
+  const params = new URLSearchParams({
+    db: "pubmed",
+    id: pmids.join(","),
+    retmode: "xml",
+  });
+  const resp = await fetch(PUBMED_FETCH, {
+    method: "POST",
+    headers: {
+      "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: params.toString(),
     signal: AbortSignal.timeout(60000),
   });
   if (!resp.ok) throw new Error(`PubMed fetch HTTP ${resp.status}`);
@@ -197,10 +234,21 @@ async function main() {
   let pmids;
   try {
     pmids = await searchPapers(buildQuery(days), maxPapers);
-    console.error(`[INFO] Journal-targeted search: ${pmids.length} results`);
+    console.error(`[INFO] Journal batch 1: ${pmids.length} results`);
   } catch (e) {
-    console.error(`[WARN] Journal search failed: ${e.message}`);
+    console.error(`[WARN] Journal batch 1 failed: ${e.message}`);
     pmids = [];
+  }
+
+  try {
+    const batch2 = await searchPapers(buildQueryBatch2(days), maxPapers);
+    console.error(`[INFO] Journal batch 2: ${batch2.length} results`);
+    const existing = new Set(pmids);
+    for (const id of batch2) {
+      if (!existing.has(id)) pmids.push(id);
+    }
+  } catch (e) {
+    console.error(`[WARN] Journal batch 2 failed: ${e.message}`);
   }
 
   if (pmids.length < 5) {
