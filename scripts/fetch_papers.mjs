@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import https from "node:https";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -93,68 +94,54 @@ function buildBroadQuery(days) {
   return `(${CORE_QUERY}) AND ${dateFilter}`;
 }
 
+function httpsGet(url, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)",
+          Accept: "*/*",
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(httpsGet(res.headers.location, timeoutMs));
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
+  });
+}
+
 async function searchPapers(query, retmax = 60) {
   const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
-        signal: AbortSignal.timeout(30000),
-        redirect: "follow",
-      });
-      if (resp.status === 429 || resp.status === 503) {
-        console.error(`[WARN] PubMed rate limited (${resp.status}), waiting...`);
-        await new Promise((r) => setTimeout(r, 10000 * (attempt + 1)));
-        continue;
-      }
-      const text = await resp.text();
-      if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-        throw new Error(`PubMed returned HTML error page (attempt ${attempt + 1})`);
-      }
-      const data = JSON.parse(text);
-      return data?.esearchresult?.idlist || [];
-    } catch (e) {
-      if (attempt < 2) {
-        console.error(`[WARN] searchPapers attempt ${attempt + 1} failed: ${e.message}`);
-        await new Promise((r) => setTimeout(r, 5000));
-      } else {
-        throw e;
-      }
-    }
+  const text = await httpsGet(url, 30000);
+  if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+    throw new Error("PubMed returned HTML error page");
   }
-  return [];
+  const data = JSON.parse(text);
+  return data?.esearchresult?.idlist || [];
 }
 
 async function fetchDetails(pmids) {
   if (!pmids.length) return [];
   const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "BulimiaNervosaBot/1.0 (research aggregator)" },
-        signal: AbortSignal.timeout(60000),
-        redirect: "follow",
-      });
-      if (resp.status === 429 || resp.status === 503) {
-        console.error(`[WARN] PubMed fetch rate limited, waiting...`);
-        await new Promise((r) => setTimeout(r, 10000 * (attempt + 1)));
-        continue;
-      }
-      const xml = await resp.text();
-      if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
-        throw new Error(`PubMed fetch returned HTML error (attempt ${attempt + 1})`);
-      }
-      return parsePapersXML(xml);
-    } catch (e) {
-      if (attempt < 2) {
-        console.error(`[WARN] fetchDetails attempt ${attempt + 1} failed: ${e.message}`);
-        await new Promise((r) => setTimeout(r, 5000));
-      } else {
-        throw e;
-      }
-    }
+  const xml = await httpsGet(url, 60000);
+  if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
+    throw new Error("PubMed fetch returned HTML error");
   }
-  return [];
+  return parsePapersXML(xml);
 }
 
 function parsePapersXML(xml) {
