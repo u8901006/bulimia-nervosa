@@ -126,12 +126,18 @@ function httpsGet(url, timeoutMs = 30000) {
 
 async function searchPapers(query, retmax = 60) {
   const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json&tool=BulimiaNervosaBot&email=bot@leepsyclinic.com`;
-  const text = await httpsGet(url, 30000);
-  if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-    throw new Error("PubMed returned HTML error page");
+  try {
+    const text = await httpsGet(url, 30000);
+    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html") || text.trim().startsWith("<HTML")) {
+      console.error(`[DEBUG] PubMed response (first 500 chars): ${text.slice(0, 500)}`);
+      throw new Error("PubMed returned HTML error page");
+    }
+    const data = JSON.parse(text);
+    return data?.esearchresult?.idlist || [];
+  } catch (e) {
+    console.error(`[WARN] searchPapers failed: ${e.message}`);
+    throw e;
   }
-  const data = JSON.parse(text);
-  return data?.esearchresult?.idlist || [];
 }
 
 async function fetchDetails(pmids) {
