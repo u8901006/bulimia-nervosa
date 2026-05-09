@@ -8,107 +8,107 @@ const ROOT = resolve(__dirname, "..");
 
 const PUBMED_SEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
 const PUBMED_FETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
+const EBI_SEARCH = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 
 const JOURNALS = [
   "International Journal of Eating Disorders",
   "European Eating Disorders Review",
   "Journal of Eating Disorders",
-  "Eating Disorders: The Journal of Treatment & Prevention",
-  "Eating and Weight Disorders - Studies on Anorexia, Bulimia and Obesity",
+  "Eating and Weight Disorders",
   "Body Image",
   "Appetite",
   "Nutrients",
-  "Journal of the Academy of Nutrition and Dietetics",
-  "American Journal of Clinical Nutrition",
-  "Clinical Nutrition",
-  "Nutrition Reviews",
   "Psychological Medicine",
   "JAMA Psychiatry",
   "The Lancet Psychiatry",
   "American Journal of Psychiatry",
-  "Journal of Clinical Psychiatry",
-  "Comprehensive Psychiatry",
-  "Behaviour Research and Therapy",
-  "Journal of Consulting and Clinical Psychology",
-  "Clinical Psychology Review",
-  "Clinical Psychological Science",
-  "Psychotherapy and Psychosomatics",
-  "Assessment",
-  "Psychological Assessment",
-  "Child and Adolescent Psychiatry and Mental Health",
-  "Journal of Child Psychology and Psychiatry",
-  "Journal of Adolescent Health",
-  "Pediatrics",
   "Biological Psychiatry",
   "Molecular Psychiatry",
   "Translational Psychiatry",
+  "Behaviour Research and Therapy",
+  "Journal of Child Psychology and Psychiatry",
   "Neuropsychopharmacology",
-  "Neuroscience & Biobehavioral Reviews",
-  "NeuroImage: Clinical",
-  "Human Brain Mapping",
-  "Frontiers in Behavioral Neuroscience",
-  "Hormones and Behavior",
-  "Psychoneuroendocrinology",
   "Addiction",
-  "Drug and Alcohol Dependence",
-  "Social Science & Medicine",
-  "Sociology of Health & Illness",
-  "Qualitative Health Research",
-  "Culture, Medicine, and Psychiatry",
   "British Journal of Sports Medicine",
   "Sports Medicine",
-  "Medicine & Science in Sports & Exercise",
-  "Psychology of Sport and Exercise",
 ];
 
-const CORE_QUERY = '("Bulimia Nervosa"[Mesh] OR "bulimia nervosa"[tiab] OR bulimia[tiab] OR "binge-purge"[tiab] OR "binge eating and purging"[tiab])';
+const CORE_QUERY = '("Bulimia Nervosa"[Mesh] OR "bulimia nervosa"[tiab] OR bulimia[tiab] OR "binge-purge"[tiab])';
 
-function buildQuery(days) {
-  const since = new Date(Date.now() - days * 86400000);
-  const yyyy = since.getUTCFullYear();
-  const mm = String(since.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(since.getUTCDate()).padStart(2, "0");
-  const dateFilter = `"${yyyy}/${mm}/${dd}"[Date - Publication] : "3000"[Date - Publication]`;
-  const coreJournals = JOURNALS.slice(0, 15);
-  const journalPart = coreJournals.map((j) => `"${j}"[Journal]`).join(" OR ");
-  return `(${CORE_QUERY}) AND (${journalPart}) AND ${dateFilter}`;
+function curlGet(url, timeoutMs = 30000) {
+  const sec = Math.ceil(timeoutMs / 1000);
+  return execSync(
+    `curl -sS -L --max-time ${sec} -H "User-Agent: BNBot/1.0" -- "${url}"`,
+    { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 10 * 1024 * 1024 }
+  );
 }
 
-function buildQueryBatch2(days) {
-  const since = new Date(Date.now() - days * 86400000);
-  const yyyy = since.getUTCFullYear();
-  const mm = String(since.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(since.getUTCDate()).padStart(2, "0");
-  const dateFilter = `"${yyyy}/${mm}/${dd}"[Date - Publication] : "3000"[Date - Publication]`;
-  const restJournals = JOURNALS.slice(15);
-  const journalPart = restJournals.map((j) => `"${j}"[Journal]`).join(" OR ");
-  return `(${CORE_QUERY}) AND (${journalPart}) AND ${dateFilter}`;
+function dateFilter(days) {
+  const d = new Date(Date.now() - days * 86400000);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `"${y}/${m}/${day}"[Date - Publication] : "3000"[Date - Publication]`;
+}
+
+function buildJournalQuery(days) {
+  const jp = JOURNALS.slice(0, 10).map((j) => `"${j}"[Journal]`).join(" OR ");
+  return `(${CORE_QUERY}) AND (${jp}) AND ${dateFilter(days)}`;
 }
 
 function buildBroadQuery(days) {
-  const since = new Date(Date.now() - days * 86400000);
-  const yyyy = since.getUTCFullYear();
-  const mm = String(since.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(since.getUTCDate()).padStart(2, "0");
-  const dateFilter = `"${yyyy}/${mm}/${dd}"[Date - Publication] : "3000"[Date - Publication]`;
-  return `(${CORE_QUERY}) AND ${dateFilter}`;
+  return `(${CORE_QUERY}) AND ${dateFilter(days)}`;
 }
 
-function curlGet(url, timeoutMs = 30000) {
-  const timeoutSec = Math.ceil(timeoutMs / 1000);
-  const result = execSync(
-    `curl -sS -L --max-time ${timeoutSec} -H "User-Agent: BulimiaNervosaBot/1.0 (research aggregator)" -- "${url}"`,
-    { encoding: "utf-8", timeout: timeoutMs + 5000, maxBuffer: 10 * 1024 * 1024 }
-  );
-  return result;
+function searchPubMed(query, retmax) {
+  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeURIComponent(query)}&retmax=${retmax}&sort=date&retmode=json`;
+  const text = curlGet(url, 30000);
+  if (text.trim().startsWith("<!")) throw new Error("PubMed HTML error");
+  const data = JSON.parse(text);
+  return (data?.esearchresult?.idlist || []);
 }
 
-const EBI_SEARCH = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
+function fetchPubMedDetails(pmids) {
+  if (!pmids.length) return [];
+  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml`;
+  const xml = curlGet(url, 60000);
+  if (xml.trim().startsWith("<!DOCTYPE html")) throw new Error("PubMed fetch HTML error");
+  const papers = [];
+  const re = /<PubmedArticle>([\s\S]*?)<\/PubmedArticle>/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const b = m[1];
+    const titleM = b.match(/<ArticleTitle>([\s\S]*?)<\/ArticleTitle>/);
+    const pmidM = b.match(/<PMID[^>]*>(\d+)<\/PMID>/);
+    const journalM = b.match(/<Title>([\s\S]*?)<\/Title>/);
+    const absParts = [];
+    const absRe = /<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/g;
+    let am;
+    while ((am = absRe.exec(b)) !== null) {
+      const lbl = (am[0].match(/Label="([^"]*)"/) || [])[1] || "";
+      const txt = am[1].replace(/<[^>]+>/g, "").trim();
+      if (txt) absParts.push(lbl ? `${lbl}: ${txt}` : txt);
+    }
+    const kwList = [];
+    const kwRe = /<Keyword>([\s\S]*?)<\/Keyword>/g;
+    let kw;
+    while ((kw = kwRe.exec(b)) !== null) if (kw[1].trim()) kwList.push(kw[1].trim());
+    const pmid = pmidM?.[1] || "";
+    papers.push({
+      pmid,
+      title: titleM ? titleM[1].replace(/<[^>]+>/g, "").trim() : "",
+      journal: journalM?.[1]?.trim() || "",
+      date: [b.match(/<Year>(\d{4})<\/Year>/)?.[1], b.match(/<Month>([^<]+)<\/Month>/)?.[1], b.match(/<Day>(\d+)<\/Day>/)?.[1]].filter(Boolean).join(" "),
+      abstract: absParts.join(" ").slice(0, 2000),
+      url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : "",
+      keywords: kwList,
+    });
+  }
+  return papers;
+}
 
 function searchEuropePMC(query, pageSize = 50) {
-  const europeQuery = query.replace(/\[Mesh\]/g, "").replace(/\[tiab\]/g, "").replace(/\[Journal\]/g, "").replace(/\[Date - Publication\].*$/,"").replace(/[":()]/g, "").trim();
-  const url = `${EBI_SEARCH}?query=${encodeURIComponent(europeQuery)}&format=json&pageSize=${pageSize}&sort=PUB_DATE desc`;
-  console.error(`[INFO] Trying Europe PMC fallback...`);
+  const url = `${EBI_SEARCH}?query=${encodeURIComponent(query)}&format=json&pageSize=${pageSize}&sort=PUB_DATE desc`;
   const text = curlGet(url, 30000);
   const data = JSON.parse(text);
   const results = data?.resultList?.result || [];
@@ -119,126 +119,30 @@ function searchEuropePMC(query, pageSize = 50) {
     date: r.pubYear || "",
     abstract: (r.abstractText || "").slice(0, 2000),
     url: r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : (r.doi ? `https://doi.org/${r.doi}` : ""),
-    keywords: (r.keywordList?.keyword || []).slice(0, 10),
+    keywords: [],
     doi: r.doi || "",
   }));
 }
-  return encodeURIComponent(str).replace(/%20/g, "+");
-}
-
-function encodeQuery(str) {
-  return encodeURIComponent(str).replace(/%20/g, "+");
-}
-
-function searchPapers(query, retmax = 60) {
-  const url = `${PUBMED_SEARCH}?db=pubmed&term=${encodeQuery(query)}&retmax=${retmax}&sort=date&retmode=json`;
-  try {
-    const text = curlGet(url, 30000);
-    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html") || text.trim().startsWith("<HTML")) {
-      throw new Error("PubMed returned HTML error page");
-    }
-    const data = JSON.parse(text);
-    return data?.esearchresult?.idlist || [];
-  } catch (e) {
-    throw e;
-  }
-}
-
-function fetchDetails(pmids) {
-  if (!pmids.length) return [];
-  const url = `${PUBMED_FETCH}?db=pubmed&id=${pmids.join(",")}&retmode=xml`;
-  const xml = curlGet(url, 60000);
-  if (xml.trim().startsWith("<!DOCTYPE html") || xml.includes("<title>Error</title>")) {
-    throw new Error("PubMed fetch returned HTML error");
-  }
-  return parsePapersXML(xml);
-}
-
-function parsePapersXML(xml) {
-  const papers = [];
-  const articleRegex = /<PubmedArticle>([\s\S]*?)<\/PubmedArticle>/g;
-  let match;
-  while ((match = articleRegex.exec(xml)) !== null) {
-    const block = match[1];
-    const titleMatch = block.match(/<ArticleTitle>([\s\S]*?)<\/ArticleTitle>/);
-    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-    const pmidMatch = block.match(/<PMID[^>]*>(\d+)<\/PMID>/);
-    const pmid = pmidMatch ? pmidMatch[1] : "";
-    const journalMatch = block.match(/<Title>([\s\S]*?)<\/Title>/);
-    const journal = journalMatch ? journalMatch[1].trim() : "";
-
-    const abstractParts = [];
-    const absRegex = /<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/g;
-    let absMatch;
-    while ((absMatch = absRegex.exec(block)) !== null) {
-      const labelMatch = absMatch[0].match(/Label="([^"]*)"/);
-      const label = labelMatch ? labelMatch[1] : "";
-      const text = absMatch[1].replace(/<[^>]+>/g, "").trim();
-      if (text) {
-        abstractParts.push(label ? `${label}: ${text}` : text);
-      }
-    }
-    const abstract = abstractParts.join(" ").slice(0, 2000);
-
-    const yearMatch = block.match(/<Year>(\d{4})<\/Year>/);
-    const monthMatch = block.match(/<Month>([^<]+)<\/Month>/);
-    const dayMatch = block.match(/<Day>(\d+)<\/Day>/);
-    const dateParts = [
-      yearMatch?.[1] || "",
-      monthMatch?.[1] || "",
-      dayMatch?.[1] || "",
-    ].filter(Boolean);
-    const dateStr = dateParts.join(" ");
-
-    const keywords = [];
-    const kwRegex = /<Keyword>([\s\S]*?)<\/Keyword>/g;
-    let kwMatch;
-    while ((kwMatch = kwRegex.exec(block)) !== null) {
-      const kw = kwMatch[1].trim();
-      if (kw) keywords.push(kw);
-    }
-
-    papers.push({
-      pmid,
-      title,
-      journal,
-      date: dateStr,
-      abstract,
-      url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : "",
-      keywords,
-    });
-  }
-  return papers;
-}
 
 function loadSeenPmids() {
-  const seenPath = resolve(ROOT, "seen_pmids.json");
-  if (existsSync(seenPath)) {
-    try {
-      return new Set(JSON.parse(readFileSync(seenPath, "utf-8")));
-    } catch {
-      return new Set();
-    }
+  const p = resolve(ROOT, "seen_pmids.json");
+  if (existsSync(p)) {
+    try { return new Set(JSON.parse(readFileSync(p, "utf-8"))); } catch { /* */ }
   }
   const docsDir = resolve(ROOT, "docs");
   if (!existsSync(docsDir)) return new Set();
-  const files = readdirSync(docsDir).filter((f) => f.startsWith("bulimia-") && f.endsWith(".html"));
   const pmids = new Set();
-  for (const f of files) {
+  for (const f of readdirSync(docsDir).filter((f) => f.startsWith("bulimia-") && f.endsWith(".html"))) {
     try {
       const html = readFileSync(resolve(docsDir, f), "utf-8");
-      const urlMatches = html.matchAll(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/g);
-      for (const m of urlMatches) {
-        pmids.add(m[1]);
-      }
-    } catch {}
+      for (const m of html.matchAll(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/g)) pmids.add(m[1]);
+    } catch { /* */ }
   }
   return pmids;
 }
 
 function saveSeenPmids(pmids) {
-  const seenPath = resolve(ROOT, "seen_pmids.json");
-  writeFileSync(seenPath, JSON.stringify([...pmids], null, 2), "utf-8");
+  writeFileSync(resolve(ROOT, "seen_pmids.json"), JSON.stringify([...pmids], null, 2), "utf-8");
 }
 
 function main() {
@@ -247,77 +151,58 @@ function main() {
 
   console.error(`[INFO] Fetching BN papers from last ${days} days...`);
 
-  let pmids;
+  let pmidList = [];
   try {
-    pmids = searchPapers(buildQuery(days), maxPapers);
-    console.error(`[INFO] Journal batch 1: ${pmids.length} results`);
+    pmidList = searchPubMed(buildJournalQuery(days), maxPapers);
+    console.error(`[INFO] PubMed journal search: ${pmidList.length} results`);
   } catch (e) {
-    console.error(`[WARN] Journal batch 1 failed: ${e.message}`);
-    pmids = [];
+    console.error(`[WARN] PubMed journal search failed: ${e.message}`);
   }
 
-  try {
-    const batch2 = searchPapers(buildQueryBatch2(days), maxPapers);
-    console.error(`[INFO] Journal batch 2: ${batch2.length} results`);
-    const existing = new Set(pmids);
-    for (const id of batch2) {
-      if (!existing.has(id)) pmids.push(id);
-    }
-  } catch (e) {
-    console.error(`[WARN] Journal batch 2 failed: ${e.message}`);
-  }
-
-  if (pmids.length < 5) {
+  if (pmidList.length < 5) {
     try {
-      const broad = searchPapers(buildBroadQuery(days), maxPapers);
-      console.error(`[INFO] Broad search: ${broad.length} results`);
-      const existing = new Set(pmids);
-      for (const id of broad) {
-        if (!existing.has(id)) pmids.push(id);
-      }
+      const broad = searchPubMed(buildBroadQuery(days), maxPapers);
+      console.error(`[INFO] PubMed broad search: ${broad.length} results`);
+      const seen = new Set(pmidList);
+      for (const id of broad) if (!seen.has(id)) pmidList.push(id);
     } catch (e) {
-      console.error(`[WARN] Broad search also failed: ${e.message}`);
+      console.error(`[WARN] PubMed broad search failed: ${e.message}`);
     }
   }
 
   let papers = [];
-  if (pmids.length > 0) {
+  if (pmidList.length > 0) {
     try {
-      papers = fetchDetails(pmids);
+      papers = fetchPubMedDetails(pmidList);
       console.error(`[INFO] Fetched details for ${papers.length} papers from PubMed`);
     } catch (e) {
-      console.error(`[WARN] PubMed fetch failed: ${e.message}`);
+      console.error(`[WARN] PubMed detail fetch failed: ${e.message}`);
     }
   }
 
   if (papers.length === 0) {
-    console.error(`[INFO] PubMed failed, trying Europe PMC...`);
+    console.error(`[INFO] Trying Europe PMC fallback...`);
     try {
-      const broadQuery = `bulimia nervosa OR binge-purge OR binge eating purging`;
-      papers = searchEuropePMC(broadQuery, maxPapers);
-      console.error(`[INFO] Europe PMC returned ${papers.length} papers`);
+      papers = searchEuropePMC("bulimia nervosa OR binge-purge OR binge eating purging", maxPapers);
+      console.error(`[INFO] Europe PMC: ${papers.length} papers`);
     } catch (e) {
       console.error(`[WARN] Europe PMC also failed: ${e.message}`);
     }
   }
 
-  const now = new Date();
-  const taipei = new Date(now.getTime() + 8 * 3600000);
-  const dateStr = `${taipei.getUTCFullYear()}-${String(taipei.getUTCMonth() + 1).padStart(2, "0")}-${String(taipei.getUTCDate()).padStart(2, "0")}`;
-
   const seenPmids = loadSeenPmids();
   papers = papers.filter((p) => !seenPmids.has(p.pmid));
   console.error(`[INFO] ${papers.length} new papers (after dedup from ${seenPmids.size} seen)`);
 
-  const output = { date: dateStr, count: papers.length, papers };
+  const now = new Date();
+  const taipei = new Date(now.getTime() + 8 * 3600000);
+  const dateStr = `${taipei.getUTCFullYear()}-${String(taipei.getUTCMonth() + 1).padStart(2, "0")}-${String(taipei.getUTCDate()).padStart(2, "0")}`;
 
-  const outPath = resolve(ROOT, "papers.json");
-  writeFileSync(outPath, JSON.stringify(output, null, 2), "utf-8");
+  writeFileSync(resolve(ROOT, "papers.json"), JSON.stringify({ date: dateStr, count: papers.length, papers }, null, 2), "utf-8");
   console.error(`[INFO] Saved to papers.json (${papers.length} papers)`);
 
   const newPmids = papers.filter((p) => p.pmid).map((p) => p.pmid);
-  const allSeen = new Set([...seenPmids, ...newPmids]);
-  saveSeenPmids(allSeen);
+  saveSeenPmids(new Set([...seenPmids, ...newPmids]));
 }
 
 try {
