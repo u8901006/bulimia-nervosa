@@ -81,7 +81,7 @@ ${links}
     <a href="https://buymeacoffee.com/CYlee" class="link-item" target="_blank" rel="noopener"><span>☕</span><span>Buy Me a Coffee</span></a>
   </div>
   <footer>
-    <p>Powered by PubMed + Zhipu AI &middot; <a href="https://github.com/u8901006/bulimia-nervosa">GitHub</a></p>
+    <p>Powered by PubMed + NVIDIA AI &middot; <a href="https://github.com/u8901006/bulimia-nervosa">GitHub</a></p>
   </footer>
 </div>
 </body>

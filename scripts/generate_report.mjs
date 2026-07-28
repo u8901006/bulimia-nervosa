@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 
-const API_BASE = process.env.ZHIPU_API_BASE || "https://open.bigmodel.cn/api/coding/paas/v4";
-const MODELS = ["GLM-5-Turbo", "GLM-4.7", "GLM-4.7-Flash"];
-const MAX_TOKENS = 50000;
+const API_BASE = process.env.NVIDIA_API_BASE || "https://integrate.api.nvidia.com/v1";
+const MODELS = ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-nano-30b-a3b"];
+const MAX_TOKENS = 16384;
 const TIMEOUT_MS = 480000;
 
 const SYSTEM_PROMPT = `你是暴食症（Bulimia Nervosa）研究領域的資深學術分析師。你的任務是：
@@ -67,7 +67,7 @@ function extractJSON(text) {
   throw new Error("Failed to extract valid JSON from AI response");
 }
 
-async function callGLM(apiKey, papersData) {
+async function callNvidiaAPI(apiKey, papersData) {
   const taipei = new Date(Date.now() + 8 * 3600000);
   const dateStr = `${taipei.getUTCFullYear()}-${String(taipei.getUTCMonth() + 1).padStart(2, "0")}-${String(taipei.getUTCDate()).padStart(2, "0")}`;
   const paperCount = papersData.count || 0;
@@ -145,9 +145,11 @@ ${papersText}
               { role: "system", content: SYSTEM_PROMPT },
               { role: "user", content: prompt },
             ],
-            temperature: 0.3,
-            top_p: 0.9,
+            temperature: 1.0,
+            top_p: 0.95,
             max_tokens: MAX_TOKENS,
+            stream: false,
+            chat_template_kwargs: { enable_thinking: false },
           }),
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
@@ -352,7 +354,7 @@ function generateHTML(analysis) {
       <div class="header-meta">
         <span class="badge badge-date">📅 ${dateDisplay}</span>
         <span class="badge badge-count">📊 ${totalCount} 篇文獻</span>
-        <span class="badge badge-source">Powered by PubMed + Zhipu AI</span>
+        <span class="badge badge-source">Powered by PubMed + NVIDIA AI</span>
       </div>
     </div>
   </header>
@@ -386,7 +388,7 @@ function generateHTML(analysis) {
   </div>
 
   <footer>
-    <span>資料來源：PubMed &middot; 分析模型：GLM-5-Turbo</span>
+    <span>資料來源：PubMed &middot; 分析模型：NVIDIA Nemotron</span>
     <span><a href="https://github.com/u8901006/bulimia-nervosa">GitHub</a></span>
   </footer>
 </div>
@@ -403,8 +405,8 @@ async function main() {
   const inputPath = resolve(ROOT, process.env.INPUT_FILE || "papers.json");
   const outputPath = resolve(ROOT, process.env.OUTPUT_FILE || "docs/bulimia-placeholder.html");
 
-  if (!process.env.ZHIPU_API_KEY) {
-    console.error("[ERROR] ZHIPU_API_KEY env var is required");
+  if (!process.env.NVIDIA_API_KEY) {
+    console.error("[ERROR] NVIDIA_API_KEY env var is required");
     process.exit(1);
   }
 
@@ -439,7 +441,7 @@ async function main() {
   if (papersData._analysis) {
     analysis = papersData._analysis;
   } else {
-    analysis = await callGLM(process.env.ZHIPU_API_KEY, papersData);
+    analysis = await callNvidiaAPI(process.env.NVIDIA_API_KEY, papersData);
     if (!analysis) {
       console.error("[ERROR] Analysis failed, cannot generate report");
       process.exit(1);
